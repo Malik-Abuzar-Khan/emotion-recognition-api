@@ -1,0 +1,31 @@
+# Virtual environments
+venv/
+env/
+.env/
+
+# Compiled / cache files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Model or data files (too large for GitHub)
+*.pkl
+*.h5
+*.csv
+*.json
+*.zip
+
+# System files
+.DS_Store
+Thumbs.db
+
+# IDE / Editor
+.idea/
+.vscode/
+
+# Logs
+*.log
+
+# Instance folder (Flask)
+instance/
