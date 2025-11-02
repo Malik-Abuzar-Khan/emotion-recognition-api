@@ -7,85 +7,103 @@ import json
 import firebase_admin
 from firebase_admin import credentials, auth, firestore
 
-# ✅ Initialize Flask app
+# ------------------------------------------------------------
+# 🔹 Initialize Flask App
+# ------------------------------------------------------------
 app = Flask(__name__)
 CORS(app)
 
-# ✅ Initialize Firebase Admin SDK
+# ------------------------------------------------------------
+# 🔹 Initialize Firebase Admin SDK
+# ------------------------------------------------------------
 try:
-    # If using Render Environment Variable:
+    # Render Deployment: use environment variable
     if "FIREBASE_CREDENTIALS" in os.environ:
-        cred_dict = json.loads(os.environ.get("FIREBASE_CREDENTIALS"))
+        cred_dict = json.loads(os.environ["FIREBASE_CREDENTIALS"])
         cred = credentials.Certificate(cred_dict)
+        print("✅ Loaded Firebase credentials from environment variable.")
     else:
-        # Local testing (JSON file in same folder)
+        # Local testing
         cred = credentials.Certificate("firebase_admin_key.json")
+        print("✅ Loaded Firebase credentials from local file.")
 
     firebase_admin.initialize_app(cred)
     db = firestore.client()
     print("✅ Firebase Admin initialized successfully.")
 except Exception as e:
-    print(f"Error initializing Firebase Admin: {e}")
+    print(f"❌ Error initializing Firebase Admin: {e}")
+    db = None
 
-# ✅ Load ML Models
+# ------------------------------------------------------------
+# 🔹 Load Machine Learning Model
+# ------------------------------------------------------------
 try:
     model = pickle.load(open("emotion_model.pkl", "rb"))
     vectorizer = pickle.load(open("vectorizer.pkl", "rb"))
     label_encoder = pickle.load(open("label_encoder.pkl", "rb"))
-    print("✅ Models loaded successfully.")
+    print("✅ ML Models loaded successfully.")
 except Exception as e:
-    print(f"Error loading model files: {e}")
+    print(f"❌ Error loading ML models: {e}")
+    model = vectorizer = label_encoder = None
 
 # ------------------------------------------------------------
-# 🔹 ROUTES
+# 🔹 Base Route
 # ------------------------------------------------------------
 @app.route('/')
 def home():
     return jsonify({"message": "Emotion Recognition API is running!"})
 
-# 🔹 Emotion Prediction
+# ------------------------------------------------------------
+# 🔹 Predict Emotion
+# ------------------------------------------------------------
 @app.route('/predict', methods=['POST'])
 def predict():
-    data = request.get_json()
-    text = data.get('text')
+    try:
+        data = request.get_json()
+        text = data.get('text', '').strip()
 
-    if not text:
-        return jsonify({"error": "No text provided"}), 400
+        if not text:
+            return jsonify({"error": "No text provided"}), 400
 
-    text_vec = vectorizer.transform([text])
-    prediction = model.predict(text_vec)
-    emotion = label_encoder.inverse_transform(prediction)[0]
+        text_vec = vectorizer.transform([text])
+        prediction = model.predict(text_vec)
+        emotion = label_encoder.inverse_transform(prediction)[0]
 
-    if hasattr(model, "predict_proba"):
-        probabilities = model.predict_proba(text_vec)
-        confidence = float(np.max(probabilities))
-    else:
-        confidence = 1.0
+        if hasattr(model, "predict_proba"):
+            probabilities = model.predict_proba(text_vec)
+            confidence = float(np.max(probabilities))
+        else:
+            confidence = 1.0
 
-    return jsonify({
-        "emotion": emotion,
-        "confidence": confidence
-    })
+        return jsonify({
+            "emotion": emotion,
+            "confidence": confidence
+        }), 200
+
+    except Exception as e:
+        print(f"❌ Prediction error: {e}")
+        return jsonify({"error": "Model error"}), 500
 
 # ------------------------------------------------------------
 # 🔹 ADMIN FEATURES
 # ------------------------------------------------------------
 
-# ✅ Get all users
+# ✅ Fetch all users
 @app.route('/admin/get_users', methods=['GET'])
 def get_users():
     try:
         users = []
         docs = db.collection("users").get()
         for doc in docs:
-            user = doc.to_dict()
-            user["uid"] = doc.id
-            users.append(user)
+            user_data = doc.to_dict()
+            user_data["uid"] = doc.id
+            users.append(user_data)
         return jsonify(users), 200
     except Exception as e:
+        print(f"❌ Error fetching users: {e}")
         return jsonify({"error": str(e)}), 500
 
-# ✅ Delete user + all related data
+# ✅ Delete user (Firebase Auth + Firestore + global history)
 @app.route('/admin/delete_user', methods=['POST'])
 def delete_user():
     try:
@@ -94,34 +112,35 @@ def delete_user():
         if not uid:
             return jsonify({"error": "Missing UID"}), 400
 
-        # 1️⃣ Delete user from Firebase Auth
+        # 1️⃣ Delete from Firebase Authentication
         try:
             auth.delete_user(uid)
+            print(f"🗑️ Firebase Auth: Deleted user {uid}")
         except Exception as e:
-            print(f"⚠️ Skipping Firebase Auth deletion (possibly already removed): {e}")
+            print(f"⚠️ Auth deletion skipped: {e}")
 
-        # 2️⃣ Delete user's subcollections (like personal history)
+        # 2️⃣ Delete user’s subcollections
         user_ref = db.collection("users").document(uid)
         try:
-            subcollections = user_ref.collections()
-            for subcol in subcollections:
+            for subcol in user_ref.collections():
                 for doc in subcol.stream():
                     doc.reference.delete()
         except Exception as e:
-            print(f"⚠️ No subcollections found or failed to delete: {e}")
+            print(f"⚠️ Failed to delete subcollections for {uid}: {e}")
 
-        # 3️⃣ Delete user's document
+        # 3️⃣ Delete Firestore document
         user_ref.delete()
 
-        # 4️⃣ Delete all user entries in global "history" collection
-        history_docs = db.collection("history").where("userId", "==", uid).stream()
+        # 4️⃣ Delete from global history
         deleted_count = 0
+        history_docs = db.collection("history").where("userId", "==", uid).stream()
         for doc in history_docs:
             doc.reference.delete()
             deleted_count += 1
 
+        print(f"✅ Deleted {uid} with {deleted_count} related history records.")
         return jsonify({
-            "message": f"✅ User {uid} and related data deleted successfully.",
+            "message": f"User {uid} deleted successfully.",
             "deleted_history_entries": deleted_count
         }), 200
 
@@ -129,7 +148,7 @@ def delete_user():
         print(f"❌ Error deleting user: {e}")
         return jsonify({"error": str(e)}), 500
 
-# ✅ Update user role or name
+# ✅ Update user (role or name)
 @app.route('/admin/update_user', methods=['POST'])
 def update_user():
     try:
@@ -151,14 +170,15 @@ def update_user():
             return jsonify({"error": "No data to update"}), 400
 
         db.collection("users").document(uid).update(update_data)
-        return jsonify({"message": "✅ User updated successfully."}), 200
+        print(f"✅ Updated user {uid} with data: {update_data}")
+        return jsonify({"message": "User updated successfully."}), 200
 
     except Exception as e:
         print(f"❌ Error updating user: {e}")
         return jsonify({"error": str(e)}), 500
 
 # ------------------------------------------------------------
-# 🔹 RUN SERVER
+# 🔹 Run Flask App
 # ------------------------------------------------------------
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
