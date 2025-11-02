@@ -1,30 +1,37 @@
-# Virtual environments
+# 🧠 Python virtual environments
 venv/
 env/
-.env/
+.venv/
+ENV/
 
-# Compiled / cache files
+# 🔥 Firebase admin key (sensitive!)
+firebase_admin_key.json
+
+# 🧩 Python cache and compiled files
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
 
-# Model or data files (too large for GitHub)
+# 🧠 Model and data files (can be large)
+*.pkl
 *.h5
 *.csv
 *.json
 *.zip
 
-# System files
-.DS_Store
-Thumbs.db
+# 🧾 Log files
+*.log
 
-# IDE / Editor
+# ⚙️ IDE / editor settings
 .idea/
 .vscode/
 
-# Logs
-*.log
+# 🖥️ System files
+.DS_Store
+Thumbs.db
 
-# Instance folder (Flask)
+# 🧱 Flask / build folders
 instance/
+build/
+dist/
