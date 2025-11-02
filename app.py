@@ -173,6 +173,15 @@ def update_user():
         print(f"❌ Error updating user: {e}")
         return jsonify({"error": str(e)}), 500
 
+# ✅ Test Firebase connection
+@app.route("/admin/test_firebase")
+def test_firebase():
+    try:
+        user_list = [u.uid for u in auth.list_users().iterate_all()]
+        return jsonify({"users_found": len(user_list)}), 200
+    except Exception as e:
+        return jsonify({"firebase_error": str(e)}), 500
+
 # ------------------------------------------------------------
 # 🔹 Run Flask App
 # ------------------------------------------------------------
