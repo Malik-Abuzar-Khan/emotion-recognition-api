@@ -3,6 +3,7 @@ from flask_cors import CORS
 import pickle
 import numpy as np
 import os
+import json
 import firebase_admin
 from firebase_admin import credentials, auth, firestore
 
@@ -12,7 +13,14 @@ CORS(app)
 
 # ✅ Initialize Firebase Admin SDK
 try:
-    cred = credentials.Certificate("firebase_admin_key.json")  # <-- update path if needed
+    # If using Render Environment Variable:
+    if "FIREBASE_CREDENTIALS" in os.environ:
+        cred_dict = json.loads(os.environ.get("FIREBASE_CREDENTIALS"))
+        cred = credentials.Certificate(cred_dict)
+    else:
+        # Local testing (JSON file in same folder)
+        cred = credentials.Certificate("firebase_admin_key.json")
+
     firebase_admin.initialize_app(cred)
     db = firestore.client()
     print("✅ Firebase Admin initialized successfully.")
@@ -29,14 +37,13 @@ except Exception as e:
     print(f"Error loading model files: {e}")
 
 # ------------------------------------------------------------
-# 🔹 API ROUTES
+# 🔹 ROUTES
 # ------------------------------------------------------------
-
 @app.route('/')
 def home():
     return jsonify({"message": "Emotion Recognition API is running!"})
 
-# 🔹 Predict Emotion
+# 🔹 Emotion Prediction
 @app.route('/predict', methods=['POST'])
 def predict():
     data = request.get_json()
@@ -60,12 +67,11 @@ def predict():
         "confidence": confidence
     })
 
-
 # ------------------------------------------------------------
-# 🔹 ADMIN FEATURES (MANAGE USERS)
+# 🔹 ADMIN FEATURES
 # ------------------------------------------------------------
 
-# ✅ Get all users (from Firebase Auth + Firestore)
+# ✅ Get all users
 @app.route('/admin/get_users', methods=['GET'])
 def get_users():
     try:
@@ -79,8 +85,7 @@ def get_users():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-
-# ✅ Delete a user completely (Firestore + Firebase Auth)
+# ✅ Delete user + all related data
 @app.route('/admin/delete_user', methods=['POST'])
 def delete_user():
     try:
@@ -89,35 +94,42 @@ def delete_user():
         if not uid:
             return jsonify({"error": "Missing UID"}), 400
 
-        # 🔹 1. Delete user from Firebase Authentication
+        # 1️⃣ Delete user from Firebase Auth
         try:
             auth.delete_user(uid)
         except Exception as e:
-            print(f"⚠️ Firebase Auth deletion failed (maybe user not found): {e}")
+            print(f"⚠️ Skipping Firebase Auth deletion (possibly already removed): {e}")
 
-        # 🔹 2. Delete user's Firestore document
+        # 2️⃣ Delete user's subcollections (like personal history)
         user_ref = db.collection("users").document(uid)
+        try:
+            subcollections = user_ref.collections()
+            for subcol in subcollections:
+                for doc in subcol.stream():
+                    doc.reference.delete()
+        except Exception as e:
+            print(f"⚠️ No subcollections found or failed to delete: {e}")
+
+        # 3️⃣ Delete user's document
         user_ref.delete()
 
-        # 🔹 3. Delete user's subcollection (history)
-        history_ref = user_ref.collection("history")
-        histories = history_ref.stream()
-        for doc in histories:
+        # 4️⃣ Delete all user entries in global "history" collection
+        history_docs = db.collection("history").where("userId", "==", uid).stream()
+        deleted_count = 0
+        for doc in history_docs:
             doc.reference.delete()
+            deleted_count += 1
 
-        # 🔹 4. Delete related entries in global "history" collection
-        all_history = db.collection("history").where("userId", "==", uid).stream()
-        for doc in all_history:
-            doc.reference.delete()
-
-        return jsonify({"message": f"User {uid} and all related data deleted successfully!"}), 200
+        return jsonify({
+            "message": f"✅ User {uid} and related data deleted successfully.",
+            "deleted_history_entries": deleted_count
+        }), 200
 
     except Exception as e:
         print(f"❌ Error deleting user: {e}")
         return jsonify({"error": str(e)}), 500
 
-
-# ✅ Update user details (name or role)
+# ✅ Update user role or name
 @app.route('/admin/update_user', methods=['POST'])
 def update_user():
     try:
@@ -135,15 +147,15 @@ def update_user():
         if role:
             update_data["role"] = role
 
-        if update_data:
-            db.collection("users").document(uid).update(update_data)
-            return jsonify({"message": "User updated successfully"}), 200
-        else:
+        if not update_data:
             return jsonify({"error": "No data to update"}), 400
 
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        db.collection("users").document(uid).update(update_data)
+        return jsonify({"message": "✅ User updated successfully."}), 200
 
+    except Exception as e:
+        print(f"❌ Error updating user: {e}")
+        return jsonify({"error": str(e)}), 500
 
 # ------------------------------------------------------------
 # 🔹 RUN SERVER
