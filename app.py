@@ -17,21 +17,17 @@ CORS(app)
 # 🔹 Initialize Firebase Admin SDK
 # ------------------------------------------------------------
 try:
-    # Render Deployment: use environment variable
     if "FIREBASE_CREDENTIALS" in os.environ:
         cred_dict = json.loads(os.environ["FIREBASE_CREDENTIALS"])
         cred = credentials.Certificate(cred_dict)
-        print("✅ Loaded Firebase credentials from environment variable.")
     else:
-        # Local testing
         cred = credentials.Certificate("firebase_admin_key.json")
-        print("✅ Loaded Firebase credentials from local file.")
 
     firebase_admin.initialize_app(cred)
     db = firestore.client()
-    print("✅ Firebase Admin initialized successfully.")
+    print("✅ Firebase initialized successfully.")
 except Exception as e:
-    print(f"❌ Error initializing Firebase Admin: {e}")
+    print(f"⚠️ Firebase initialization failed: {e}")
     db = None
 
 # ------------------------------------------------------------
