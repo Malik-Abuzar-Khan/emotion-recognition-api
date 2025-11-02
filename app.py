@@ -4,6 +4,7 @@ import pickle
 import numpy as np
 import os
 import json
+import time
 import firebase_admin
 from firebase_admin import credentials, auth, firestore
 
@@ -14,21 +15,28 @@ app = Flask(__name__)
 CORS(app)
 
 # ------------------------------------------------------------
-# 🔹 Initialize Firebase Admin SDK
+# 🔹 Initialize Firebase Admin SDK (Safe + Retry)
 # ------------------------------------------------------------
-try:
-    if "FIREBASE_CREDENTIALS" in os.environ:
-        cred_dict = json.loads(os.environ["FIREBASE_CREDENTIALS"])
-        cred = credentials.Certificate(cred_dict)
-    else:
-        cred = credentials.Certificate("firebase_admin_key.json")
+for attempt in range(3):
+    try:
+        if "FIREBASE_CREDENTIALS" in os.environ:
+            cred_dict = json.loads(os.environ["FIREBASE_CREDENTIALS"])
+            cred = credentials.Certificate(cred_dict)
+        else:
+            cred = credentials.Certificate("firebase_admin_key.json")
 
-    firebase_admin.initialize_app(cred)
-    db = firestore.client()
-    print("✅ Firebase initialized successfully.")
-except Exception as e:
-    print(f"⚠️ Firebase initialization failed: {e}")
-    db = None
+        if not firebase_admin._apps:
+            firebase_admin.initialize_app(cred)
+
+        db = firestore.client()
+        print("✅ Firebase initialized successfully.")
+        break
+    except Exception as e:
+        print(f"⚠️ Firebase initialization failed (attempt {attempt+1}/3): {e}")
+        db = None
+        time.sleep(2)
+else:
+    print("❌ Firebase failed to initialize after 3 attempts.")
 
 # ------------------------------------------------------------
 # 🔹 Load Machine Learning Model
@@ -108,12 +116,18 @@ def delete_user():
         if not uid:
             return jsonify({"error": "Missing UID"}), 400
 
-        # 1️⃣ Delete from Firebase Authentication
-        try:
-            auth.delete_user(uid)
-            print(f"🗑️ Firebase Auth: Deleted user {uid}")
-        except Exception as e:
-            print(f"⚠️ Auth deletion skipped: {e}")
+        # 1️⃣ Delete from Firebase Authentication (retry up to 3 times)
+        for i in range(3):
+            try:
+                auth.delete_user(uid)
+                print(f"🗑️ Firebase Auth: Deleted user {uid}")
+                break
+            except Exception as e:
+                if i < 2:
+                    print(f"⚠️ Retrying auth deletion ({i+1}/3): {e}")
+                    time.sleep(1)
+                else:
+                    print(f"⚠️ Skipping Firebase Auth deletion: {e}")
 
         # 2️⃣ Delete user’s subcollections
         user_ref = db.collection("users").document(uid)
